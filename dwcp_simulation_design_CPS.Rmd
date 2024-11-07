@@ -1,0 +1,167 @@
+---
+title: "DWCP_Simulation_Design_CPS"
+output: html_notebook
+---
+
+To begin we will import the necessary libraries to replicate the code from Python to R. Ensure all packages are installed before attempting to run the file.
+```{r}
+pck <- c("Matrix", "CVXR", "data.table", "ggplot2", "parallel", "synthdid")
+lapply(pck, library, character.only = TRUE) 
+```
+We begin by replicating the decomposition functions. The order of the functions is changed for accessibility.
+```{r}
+decompose_Y <- function(Y, rank = 4) {
+  N <- nrow(Y)
+  T <- ncol(Y)
+  
+  # Perform Singular Value Decomposition
+  svd_result <- svd(Y)
+  u <- svd_result$u
+  s <- svd_result$d
+  v <- svd_result$v
+  
+  # Extract the rank components
+  factor_unit <- u[, 1:rank]
+  factor_time <- t(v)[1:rank, ]
+  
+  # Calculate the low-rank approximation matrix L
+  L <- factor_unit %*% diag(s[1:rank]) %*% factor_time
+  
+  # Calculate the residual matrix E
+  E <- Y - L
+  
+  # Calculate F and M matrices
+  F <- outer(rowMeans(L), colMeans(L), `+`) - mean(L)
+  M <- L - F
+  
+  # Return the results
+  list(F = F, M = M, E = E, factor_unit_scaled = factor_unit * sqrt(N))
+}
+```
+Now we include the helper functions needed for run_MCNNM
+```{r}
+getPO <- function(A, O) {
+  # Create an output matrix initialized to zeros with the same dimensions as A
+  A_out <- matrix(0, nrow = nrow(A), ncol = ncol(A))
+  
+  # Use the indices in O to copy elements from A to A_out
+  A_out[cbind(O[,1], O[,2])] <- A[cbind(O[,1], O[,2])]
+  
+  return(A_out)
+}
+
+getPOinv <- function(A, O) {
+  # Create a copy of A to modify
+  A_out <- A
+  
+  # Set elements at specified indices in O to 0
+  A_out[cbind(O[,1], O[,2])] <- 0
+  
+  return(A_out)
+}
+
+shrink_lambda <- function(A, lambd) {
+  # Perform Singular Value Decomposition
+  svd_result <- svd(A)
+  S <- svd_result$u
+  Σ <- svd_result$d
+  R <- t(svd_result$v)
+  
+  # Shrink the singular values by lambda
+  Σ <- Σ - lambd
+  Σ[Σ < 0] <- 0
+  
+  # Reconstruct the matrix with the modified singular values
+  S %*% diag(Σ) %*% R
+}
+
+```
+With the helper functions now defined we can write out the function run_MCNNM
+```{r}
+run_MCNNM <- function(Y_obs, O, lambd = 10, threshold = 0.01, print_every = NULL, max_iters = 20000) {
+  
+  # Initialize L_prev with values from Y_obs outside the observed entries
+  L_prev <- getPOinv(Y_obs, O)
+  change <- 1000
+  iters <- 0
+  
+  while ((change > threshold) && (iters < max_iters)) {
+    
+    # Get observed and unobserved parts
+    PO <- getPO(Y_obs, O)
+    PO_inv <- getPOinv(L_prev, O)
+    
+    # Update L_star and shrink the matrix
+    L_star <- PO + PO_inv
+    L_new <- shrink_lambda(L_star, lambd)
+    
+    # Calculate the change
+    change <- norm(L_prev - L_new, type = "F")
+    
+    # Update L_prev and iteration count
+    L_prev <- L_new
+    iters <- iters + 1
+    
+    # Print progress if requested
+    if (!is.null(print_every) && (iters %% print_every == 0)) {
+      cat("Iteration:", iters, "Change:", change, "\n")
+    }
+  }
+  
+  return(L_new)
+}
+```
+
+
+Below is the cell corresponding to the DWCP_TWFE_average 
+```{r}
+DWCP_TWFE_average <- function(Y, W, treated_units, lambda_unit, lambda_time, lambda_nn, treated_periods = 10) {
+  
+  library(CVXR)
+  
+  N <- nrow(Y)
+  T <- ncol(Y)
+  
+  # dist_time
+  dist_time <- abs(1:T - (T - treated_periods / 2))
+  
+  # dist_unit
+  average_treated <- rowMeans(Y[treated_units, , drop = FALSE])
+  mask <- matrix(1, N, T)
+  mask[, (T - treated_periods + 1):T] <- 0
+  A <- rowSums((Y - matrix(average_treated, nrow = N, ncol = T, byrow = TRUE))^2 * mask)
+  B <- rowSums(mask)
+  dist_unit <- sqrt(A / B)
+  
+  # distance-based weights
+  delta_unit <- exp(-lambda_unit * dist_unit)
+  delta_time <- exp(-lambda_time * dist_time)
+  delta <- outer(delta_unit, delta_time)
+  
+  # CVXR variables
+  unit_effects <- Variable(1, N)
+  time_effects <- Variable(1, T)
+  mu <- Variable()
+  tau <- Variable()
+  L <- Variable(N, T)
+  
+  unit_factor <- kronecker(matrix(1, T, 1), t(unit_effects))
+  time_factor <- kronecker(matrix(1, N, 1), time_effects)
+  
+  # Objective function
+  if (lambda_nn == Inf) {
+    objective <- sum_squares((Y - mu - unit_factor - time_factor - L - W * tau) * delta)
+  } else {
+    objective <- sum_squares((Y - mu - unit_factor - time_factor - L - W * tau) * delta) + lambda_nn * norm(L, "nuc")
+  }
+  
+  # Constraints
+  constraints <- list()
+  
+  # Problem setup and solve
+  prob <- Problem(Minimize(objective), constraints)
+  result <- solve(prob)
+  
+  return(result$getValue(tau))
+}
+```
