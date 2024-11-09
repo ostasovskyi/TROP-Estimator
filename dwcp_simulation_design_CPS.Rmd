@@ -5,7 +5,7 @@ output: html_notebook
 
 To begin we will import the necessary libraries to replicate the code from Python to R. Ensure all packages are installed before attempting to run the file.
 ```{r}
-pck <- c("Matrix", "CVXR", "data.table", "ggplot2", "parallel", "synthdid")
+pck <- c("Matrix", "CVXR", "data.table", "ggplot2", "parallel", "synthdid", "caret")
 lapply(pck, library, character.only = TRUE) 
 ```
 We begin by replicating the decomposition functions. The order of the functions is changed for accessibility.
@@ -165,3 +165,52 @@ DWCP_TWFE_average <- function(Y, W, treated_units, lambda_unit, lambda_time, lam
   return(result$getValue(tau))
 }
 ```
+Below we will implement the cross validation procedure
+```{r}
+get_CV_score <- function(Y_obs, O, lambd, n_folds = 4, verbose = FALSE) {
+  
+  # Initialize K-fold cross-validation
+  folds <- createFolds(1:nrow(O), k = n_folds, list = TRUE)
+  
+  mse <- 0
+  for (i in seq_along(folds)) {
+    Otr_idx <- folds[[i]]
+    Otst_idx <- setdiff(1:nrow(O), Otr_idx)
+    
+    Otr <- O[Otr_idx, , drop = FALSE]
+    Otst <- O[Otst_idx, , drop = FALSE]
+    
+    if (verbose) cat(".")
+
+    L <- run_MCNNM(Y_obs, Otr, lambd, threshold = 1e-10, print_every = NULL, max_iters = 20000)
+    
+    # Calculate mean squared error for the test set
+    mse <- mse + sum((Y_obs[Otst] - L[Otst]) ^ 2)
+  }
+  
+  # Return the average MSE over all folds
+  return(mse / n_folds)
+}
+
+```
+Now that we have the helper function we can implement the fucntion for performing the CV
+```{r}
+do_CV <- function(Y_obs, O, lambdas = c(5, 10, 20, 40), n_tries = 10, verbose = FALSE) {
+  
+  score <- list()
+  
+  for (t in seq_len(n_tries)) {
+    run_score <- list()
+    for (l in lambdas) {
+      if (verbose) cat(sprintf("lambda %d:", l))
+      run_score[[as.character(l)]] <- get_CV_score(Y_obs, O, l, n_folds = 4, verbose = verbose)
+      if (verbose) cat(sprintf(" : %f\n", run_score[[as.character(l)]]))
+    }
+    score[[as.character(t)]] <- run_score
+  }
+  
+  return(score)
+}
+
+```
+
