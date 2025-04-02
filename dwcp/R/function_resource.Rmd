@@ -1,0 +1,32 @@
+---
+title: "Table of Functions"
+output: html_document
+date: "2025-03-25"
+---
+
+| Function       | Inputs                         | Output                         |
+|----------------|--------------------------------|--------------------------------|
+| `ar2_correlation_matrix()`   | `ar_coef`: , `T_`:    | cor_matrix |
+| `calculate_weights()`  | `lambda_time`: ,   `lambda_unit`:,   `Y`:,   `W`:,   `N_treat`:,   `T`:,   `T_treat`:            |         weights           |
+| `compute_and_save_metrics()`  | `variables`: , `true_value`: default value is 0, `output_csv`: default is 'metrics_results.csv' (see data folder)|  final_results_wide  |
+| `compute_DWCP()`   | `data`:,`Y`:,`W`:,`lambda_unit`:,`lambda_time`:,`lambda_nn`:,`exp_num`:     | baseline row |
+| `compute_metrics()`   | `x`: , `true_value`: default value is 0    | c(bias = bias, rmse = rmse) |
+| `cross_validation()`   | `Y`:, `W`:, `lambda_grid`:, `num_runs`: default value is 500  | list(best_lambda = best_lambda, best_std_dev = best_std_dev) |
+| `decompose_Y()`   | `Y`:, `rank`: default value is 4|  list(F_ = F_, M = M, E = E, factor_unit_scaled = factor_unit * sqrt(N)) |
+| `DIDp()`   | `M`:, `mask`:  | M_pred |
+| `DIFP_TWFE()`   | `Y`:, `W`:, `treated_units`:, `treated_periods`: | treatment_effect |
+| `dist_time()`   | `s`:, `T`:, `T_treat`:  |  |
+| `dist_unit()`   | `j`:, `Y`:, `W`:, `N_treat`:, `T`:, `T_treat`:    |  |
+| `do_CV()`   | `Y_obs`:  , `O`:, `lambdas`: default value is c(5, 10, 20, 40), `n_tries`: default valya is 10, `verbose`: default value is FALSE   | score |
+| `DWCP_TWFE_average()`   | `Y`:, `W`:, `treated_units`:, `lambda_unit`:, `lambda_time`:, `lambda_nn`:, `treated_periods`: default value is 10  | result$getValue(tau) |
+| `fit_ar2()`   | `E`:   | ar_coef |
+| `generate_data()`   | `F_`:, `M`:, `cov_mat`:, `pi`:, `noise`: default is "norm", `treated_periods`: default is 10, `treated_units`: default is 10   | list(Y = Y, W = W, index = index) |
+| `get_CV_score()`   | `Y_obs`:, `O`:,lambd:, `n_folds`: default is 4, `verbose`: default is FALSE    | mse / n_folds |
+| `getPO()`   | `A`:, `O`:    | A_out |
+| `getPOinv()`   | `A`:, `O`:     | A_out |
+| `objective()`   | `params`:, `Y`:, `W`:, `weights`:, `placebo_units`:, `lambda_nn`:    |  |
+| `run_MCNNM()`   | `ar_coef`: , `T_`:    | L_new |
+| `shrink_lambda()`   | `Y_obs`:, `O`:, `lambd`: default value is 10, `threshold`: default value is 0.01, `print_every`: default value is NULL, `max_iters`: default value is 20000 |  |
+| `table_generation()`   | `fixed_effects`: , `interactive_data`:, `cov_mat`:, `prob`:, `noise`: default value is "norm", `treatment_periods`: , `treatment_units`, `exp_num`, `ran_seed`: default value is 0  | list(estimate_sdid, estimate_sc, estimate_did, estimate_mc,  estimate_difp,  estimate_dwcp) |
+
+
