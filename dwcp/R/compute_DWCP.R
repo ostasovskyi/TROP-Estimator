@@ -82,6 +82,12 @@ compute_DWCP <- function(data, Y, W, lambda_unit, lambda_time, lambda_nn, exp_nu
     cat("The RMSE of", name_vector[i], "is", error_vector[i], "\n")
   }
 
+  bias_vector <- numeric(length(estimate_vector))
+  for (i in seq_along(bias_vector)) {
+    bias_vector[i] <- mean(unlist(estimate_vector[[i]]))
+    cat("The bias of", name_vector[i], "is", bias_vector[i], "\n")
+  }
+
   # === Diagnostics ===
   cat("This is AR(2): ", ar_coef, "\n")
   cat("This is scaled_sd: ", scaled_sd, "\n")
@@ -92,6 +98,7 @@ compute_DWCP <- function(data, Y, W, lambda_unit, lambda_time, lambda_nn, exp_nu
   return(invisible(list(
     estimates = setNames(estimate_vector, name_vector),
     rmse = setNames(error_vector, name_vector),
+    bias = setNames(bias_vector, name_vector),
     ar_coef = ar_coef,
     scaled_sd = scaled_sd
   )))
