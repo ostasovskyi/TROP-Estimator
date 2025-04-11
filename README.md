@@ -1,3 +1,9 @@
+New todo:
+
+1. get replicate of this table.
+
+2. scaled difference with paper table.
+
 # Triply Robust Panel Estimators (TRPE)
 
 This package contains the replication files and implementation of the DWCP estimator.
