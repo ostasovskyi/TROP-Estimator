@@ -33,7 +33,7 @@ Once the non-CRAN dependencies are installed, install the package with
 devtools::install_github('')
 ```
 ### Example execution
-Before running the compute_DWCP functions, make sure to have run something like the following in order to have the requisite parameters. Change the column from $hours to something else as you see fit. 
+Before running the compute_DWCP functions, make sure to have run something like the following in order to have the requisite parameters. Change the column from $hours to something else as you see fit. Replace 'CPS.csv' with the local path on your machine. 
 ``` r
 df <- read.csv('CPS.csv', sep = ';')
 Y_true_full <- matrix(df$hours, nrow = 40, byrow = TRUE)
