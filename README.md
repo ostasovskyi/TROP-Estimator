@@ -1,8 +1,14 @@
-New todo:
+# Python replication update
 
-1. get replicate of this table.
+Required python modules
 
-2. scaled difference with paper table.
+numpy
+pandas
+pickle
+
+
+
+
 
 # Triply Robust Panel Estimators (TROP)
 
