@@ -1,0 +1,12 @@
+.vscode/
+.idea/
+*.swp
+*.log
+.env
+.env.*
+*.pem
+*.key
+tmp/
+temp/
+*.tmp
+*.bak
