@@ -12,3 +12,4 @@ src/*.egg-info/
 .venv/
 venv/
 ENV/
+.vscode/
