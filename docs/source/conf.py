@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "trop"
 copyright = "2026, Susan Athey, Guido Imbens, Zhaonan Qu, Davide Viviano"
 author = "Susan Athey, Guido Imbens, Zhaonan Qu, Davide Viviano"
-release = "0.1.4"
+release = "0.1.5"
 
 extensions = [
     "sphinx.ext.autodoc",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trop"
-version = "0.1.4"
+version = "0.1.5"
 description = "Triply Robust Panel (TROP) estimator: weighted TWFE with optional low-rank adjustment."
 readme = "README.md"
 requires-python = ">=3.9"

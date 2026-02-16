@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: trop
-Version: 0.1.4
+Version: 0.1.5
 Summary: Triply Robust Panel (TROP) estimator: weighted TWFE with optional low-rank adjustment.
 Author: Susan Athey, Guido Imbens, Zhaonan Qu, Davide Viviano
 License-Expression: MIT
