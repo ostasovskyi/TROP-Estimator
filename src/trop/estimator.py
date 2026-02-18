@@ -140,11 +140,13 @@ def TROP_TWFE_average(
     if is_low_rank:
         L = cp.Variable((N, T))
         residual = Y - mu - unit_factor - time_factor - L - W * tau
-        loss = cp.sum_squares(cp.multiply(residual, delta)) + float(lambda_nn) * cp.norm(L, "nuc")
+        weights = np.multiply(1.0 - W, delta)
+        loss = cp.sum(cp.multiply(weights, cp.square(residual))) + float(lambda_nn) * cp.norm(L, "nuc")
         default_solver = "SCS"  # robust choice for nuclear norm problems
     else:
         residual = Y - mu - unit_factor - time_factor - W * tau
-        loss = cp.sum_squares(cp.multiply(residual, delta))
+        weights = np.multiply(1.0 - W, delta)
+        loss = cp.sum(cp.multiply(weights, cp.square(residual)))
         default_solver = "OSQP"  # fast for pure quadratic objective
 
     prob = cp.Problem(cp.Minimize(loss))

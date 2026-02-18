@@ -32,7 +32,6 @@ def _as_list(grid: Iterable[float]) -> List[float]:
     return grid_list
 
 
-
 def _simulate_ate(
     seed: int,
     Y: np.ndarray,
