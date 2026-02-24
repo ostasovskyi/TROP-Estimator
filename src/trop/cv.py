@@ -8,10 +8,70 @@ from joblib import Parallel, delayed
 
 from .estimator import TROP_TWFE_average
 
-
 ArrayLike = Union[np.ndarray, Sequence[Sequence[float]]]
 
 
+def generate_placebo_sets(
+    N,
+    cv_sampling_method="resample",
+    n_treated_units=None,
+    n_trials=None,
+    K=None,
+    random_state=None,
+) -> List[np.ndarray]:
+    """
+    Generate placebo treatment sets for cross-validation.
+
+    Parameters
+    ----------
+    N : int
+        Total number of units.
+    cv_sampling_method : {"resample", "kfold"}
+        - "resample": random placebo assignment repeated for a number of trials
+        - "kfold": K-fold cross-validation (entire fold treated)
+    n_treated_units : int, optional
+        Required for cv_sampling_method="resample".
+    n_trials : int, optional
+        Required for cv_sampling_method="resample".
+    K : int, optional
+        Required for cv_sampling_method="kfold".
+    random_state : int or None
+        Random seed.
+
+    Returns
+    -------
+    placebo_sets : list of np.ndarray
+        List of arrays of placebo-treated unit indices.
+    """
+
+    rng = np.random.default_rng(random_state)
+    units = np.arange(N)
+
+    if cv_sampling_method == "resample":
+        if n_treated_units is None or n_trials is None:
+            raise ValueError(
+                "resample requires n_treated_units and n_trials"
+            )
+
+        placebo_sets = [
+            rng.choice(units, size=n_treated_units, replace=False)
+            for _ in range(n_trials)
+        ]
+
+    elif cv_sampling_method == "kfold":
+        if K is None:
+            raise ValueError("kfold requires K")
+
+        shuffled = rng.permutation(units)
+        folds = np.array_split(shuffled, K)
+
+        placebo_sets = [fold for fold in folds]
+
+    else:
+        raise ValueError("method must be 'resample' or 'kfold'")
+
+    return placebo_sets
+    
 def _validate_panel(Y: np.ndarray, treated_periods: int, n_treated_units: int) -> None:
     """Validate panel dimensions and placebo CV inputs."""
     if Y.ndim != 2:
@@ -32,10 +92,10 @@ def _as_list(grid: Iterable[float]) -> List[float]:
     return grid_list
 
 
+
 def _simulate_ate(
-    seed: int,
     Y: np.ndarray,
-    n_treated_units: int,
+    treated_units: np.ndarray,
     treated_periods: int,
     lambda_unit: float,
     lambda_time: float,
@@ -44,12 +104,13 @@ def _simulate_ate(
     verbose: bool = False,
 ) -> float:
     """
-    Simulate a single placebo ATE by randomly selecting treated units.
+    Simulate a single placebo ATE given indices of placebo treated units.
     """
-    rng = np.random.default_rng(seed)
+   
     N, _ = Y.shape
-    treated_units = rng.choice(N, size=n_treated_units, replace=False)
 
+    #treated_units = rng.choice(N, size=n_treated_units, replace=False)
+            
     W = np.zeros_like(Y, dtype=float)
     W[treated_units, -treated_periods:] = 1.0
 
@@ -68,13 +129,15 @@ def _simulate_ate(
 
 def TROP_cv_single(
     Y_control: ArrayLike,
-    n_treated_units: int,
     treated_periods: int,
     fixed_lambdas: Tuple[float, float] = (0.0, 0.0),
     lambda_grid: Optional[Iterable[float]] = None,
     lambda_cv: str = "unit",
     *,
-    n_trials: int = 200,
+    cv_sampling_method="resample",
+    n_trials: Optional[int] = 200,
+    n_treated_units:  Optional[int] = 1,
+    K: Optional[int] = None,
     n_jobs: int = -1,
     prefer: str = "threads",
     random_seed: int = 0,
@@ -93,8 +156,6 @@ def TROP_cv_single(
     ----------
     Y_control : array_like of shape (N, T)
         Control-only outcome panel used for placebo cross-validation.
-    n_treated_units : int
-        Number of placebo treated units sampled (without replacement) per trial.
     treated_periods : int
         Number of placebo treated (post) periods, taken as the final columns.
     fixed_lambdas : tuple of float, default=(0.0, 0.0)
@@ -107,8 +168,21 @@ def TROP_cv_single(
         Candidate values for the lambda being tuned. If None, uses ``np.arange(0, 2, 0.2)``.
     lambda_cv : {'unit', 'time', 'nn'}, default='unit'
         Which lambda to tune.
-    n_trials : int, default=200
-        Number of placebo trials per candidate lambda.
+        
+    cv_sampling_method : {"resample", "kfold"}
+        - "resample": random placebo assignment repeated for a number of trials
+        - "kfold": K-fold cross-validation (entire fold treated)
+    n_trials : int, optional, default=200
+        If using random sampling, number of trials.
+        Required for cv_sampling_method="resample".
+    n_treated_units : int, optional, default=1
+        If using random sampling, number of placebo treated units sampled (without replacement) per trial.
+        Required for cv_sampling_method="resample".
+    K : int, optional
+        If using K-fold splitting (splitting full data), number of folds
+        Required for cv_sampling_method="kfold".
+        
+        
     n_jobs : int, default=-1
         Number of parallel jobs for placebo trials. ``-1`` uses all available cores.
     prefer : {'threads', 'processes'}, default='threads'
@@ -140,9 +214,20 @@ def TROP_cv_single(
         raise ValueError("n_trials must be positive.")
     if n_jobs == 0 or n_jobs < -1:
         raise ValueError("n_jobs must be -1 or a positive integer.")
-
-    base_rng = np.random.default_rng(random_seed)
-    seeds = base_rng.integers(0, 2**32 - 1, size=n_trials, dtype=np.uint32)
+    
+   # generate the placebo sets, this is the indices of placebo treated samples for each trial/fold depending on the sampling method 
+    placebo_sets = generate_placebo_sets(
+        Y.shape[0],
+        cv_sampling_method=cv_sampling_method,
+        n_treated_units=n_treated_units,
+        n_trials=n_trials,
+        K=K,
+        random_state=random_seed # note that we use the base random seed because we want to have the same splitting for each lambda
+    )
+    if cv_sampling_method == "resample":
+        n_trial_or_fold = n_trials
+    elif cv_sampling_method == "kfold":
+        n_trial_or_fold = K
 
     scores: List[float] = []
 
@@ -159,9 +244,8 @@ def TROP_cv_single(
 
         ates = Parallel(n_jobs=n_jobs, prefer=prefer)(
             delayed(_simulate_ate)(
-                int(seed),
                 Y,
-                n_treated_units,
+                placebo_sets[trial_or_fold],
                 treated_periods,
                 lambda_unit,
                 lambda_time,
@@ -169,7 +253,7 @@ def TROP_cv_single(
                 solver,
                 verbose,
             )
-            for seed in seeds
+            for trial_or_fold in range(n_trial_or_fold)
         )
 
         ates_arr = np.asarray(ates, dtype=float)
@@ -182,14 +266,12 @@ def TROP_cv_single(
             )
 
         scores.append(float(np.sqrt(np.mean(ates_arr**2))))
-
     best_idx = int(np.argmin(scores))
     return float(lambda_grid_list[best_idx])
 
 
 def TROP_cv_cycle(
     Y_control: ArrayLike,
-    n_treated_units: int,
     treated_periods: int,
     unit_grid: Sequence[float],
     time_grid: Sequence[float],
@@ -197,7 +279,10 @@ def TROP_cv_cycle(
     lambdas_init: Optional[Tuple[float, float, float]] = None,
     *,
     max_iter: int = 50,
-    n_trials: int = 200,
+    cv_sampling_method="resample",
+    n_trials: Optional[int] = 200,
+    n_treated_units:  Optional[int] = 1, 
+    K: Optional[int] = None,
     n_jobs: int = -1,
     prefer: str = "threads",
     random_seed: int = 0,
@@ -230,8 +315,20 @@ def TROP_cv_cycle(
         parameter to the mean of its grid.
     max_iter : int, default=50
         Maximum number of coordinate-descent iterations.
-    n_trials : int, default=200
-        Number of placebo trials per grid point in each coordinate update.
+    
+    cv_sampling_method : {"resample", "kfold"}
+        - "resample": random placebo assignment repeated for a number of trials
+        - "kfold": K-fold cross-validation (entire fold treated)
+    n_trials : int, optional, default=200
+        If using random sampling, number of trials.
+        Required for cv_sampling_method="resample".
+    n_treated_units : int, optional, default=1
+        If using random sampling, number of placebo treated units sampled (without replacement) per trial.
+        Required for cv_sampling_method="resample".
+    K : int, optional
+        If using K-fold splitting (splitting full data), number of folds
+        Required for cv_sampling_method="kfold".
+        
     n_jobs : int, default=-1
         Number of parallel jobs for placebo trials. ``-1`` uses all available cores.
     prefer : {'threads', 'processes'}, default='threads'
@@ -271,29 +368,32 @@ def TROP_cv_cycle(
         old = (lambda_unit, lambda_time, lambda_nn)
 
         lambda_unit = TROP_cv_single(
-            Y, n_treated_units, treated_periods,
+            Y, treated_periods,
             fixed_lambdas=(lambda_time, lambda_nn),
             lambda_grid=unit_grid_list,
-            lambda_cv="unit",
-            n_trials=n_trials, n_jobs=n_jobs, prefer=prefer,
+            lambda_cv="unit", 
+            cv_sampling_method=cv_sampling_method, n_treated_units=n_treated_units, n_trials=n_trials, K=K,
+            n_jobs=n_jobs, prefer=prefer,
             random_seed=random_seed, solver=solver, verbose=verbose
         )
 
         lambda_time = TROP_cv_single(
-            Y, n_treated_units, treated_periods,
+            Y, treated_periods,
             fixed_lambdas=(lambda_unit, lambda_nn),
             lambda_grid=time_grid_list,
             lambda_cv="time",
-            n_trials=n_trials, n_jobs=n_jobs, prefer=prefer,
+            cv_sampling_method=cv_sampling_method, n_treated_units=n_treated_units, n_trials=n_trials, K=K, 
+            n_jobs=n_jobs, prefer=prefer,
             random_seed=random_seed, solver=solver, verbose=verbose
         )
 
         lambda_nn = TROP_cv_single(
-            Y, n_treated_units, treated_periods,
+            Y, treated_periods,
             fixed_lambdas=(lambda_unit, lambda_time),
             lambda_grid=nn_grid_list,
             lambda_cv="nn",
-            n_trials=n_trials, n_jobs=n_jobs, prefer=prefer,
+            cv_sampling_method=cv_sampling_method, n_treated_units=n_treated_units, n_trials=n_trials, K=K,
+            n_jobs=n_jobs, prefer=prefer,
             random_seed=random_seed, solver=solver, verbose=verbose
         )
 
@@ -306,13 +406,15 @@ def TROP_cv_cycle(
 
 def TROP_cv_joint(
     Y_control: ArrayLike,
-    n_treated_units: int,
     treated_periods: int,
     unit_grid: Sequence[float],
     time_grid: Sequence[float],
     nn_grid: Sequence[float],
     *,
-    n_trials: int = 200,
+    cv_sampling_method="resample",
+    n_trials: Optional[int] = 200,
+    n_treated_units:  Optional[int] = 1, 
+    K: Optional[int] = None,
     n_jobs: int = -1,
     prefer: str = "threads",
     random_seed: int = 0,
@@ -332,7 +434,7 @@ def TROP_cv_joint(
     Y_control : array_like of shape (N, T)
         Control-only outcome panel used for placebo cross-validation.
     n_treated_units : int
-        Number of placebo treated units sampled (without replacement) per trial.
+        
     treated_periods : int
         Number of placebo treated (post) periods, taken as the final columns.
     unit_grid : sequence of float
@@ -341,8 +443,20 @@ def TROP_cv_joint(
         Candidate values for `lambda_time` (time-distance decay).
     nn_grid : sequence of float
         Candidate values for `lambda_nn` (nuclear-norm penalty).
-    n_trials : int, default=200
-        Number of placebo trials per candidate triple.
+          
+    cv_sampling_method : {"resample", "kfold"}
+        - "resample": random placebo assignment repeated for a number of trials
+        - "kfold": K-fold cross-validation (entire fold treated)
+    n_trials : int, optional, default=200
+        If using random sampling, number of trials.
+        Required for cv_sampling_method="resample".
+    n_treated_units : int, optional, default=1
+        If using random sampling, number of placebo treated units sampled (without replacement) per trial.
+        Required for cv_sampling_method="resample".
+    K : int, optional
+        If using K-fold splitting (splitting full data), number of folds
+        Required for cv_sampling_method="kfold".
+
     n_jobs : int, default=-1
         Number of parallel jobs for placebo trials. ``-1`` uses all available cores.
     prefer : {'threads', 'processes'}, default='threads'
@@ -371,20 +485,30 @@ def TROP_cv_joint(
     time_grid_list = _as_list(time_grid)
     nn_grid_list = _as_list(nn_grid)
 
-    base_rng = np.random.default_rng(random_seed)
-    seeds = base_rng.integers(0, 2**32 - 1, size=n_trials, dtype=np.uint32)
-
     best_params: Optional[Tuple[float, float, float]] = None
     best_score: float = float("inf")
+
+    # generate the placebo sets, this is the indices of placebo treated samples for each trial/fold depending on the sampling method 
+    placebo_sets = generate_placebo_sets(
+        Y.shape[0],
+        cv_sampling_method=cv_sampling_method,
+        n_treated_units=n_treated_units,
+        n_trials=n_trials,
+        K=K,
+        random_state=random_seed # note that we use the base random seed because we want to have the same splitting for each lambda
+    )
+    if cv_sampling_method == "resample":
+        n_trial_or_fold = n_trials
+    elif cv_sampling_method == "kfold":
+        n_trial_or_fold = K
 
     for lambda_unit in unit_grid_list:
         for lambda_time in time_grid_list:
             for lambda_nn in nn_grid_list:
                 ates = Parallel(n_jobs=n_jobs, prefer=prefer)(
                     delayed(_simulate_ate)(
-                        int(seed),
                         Y,
-                        n_treated_units,
+                        placebo_sets[trial_or_fold], # use the current placebo trial/fold
                         treated_periods,
                         float(lambda_unit),
                         float(lambda_time),
@@ -392,9 +516,9 @@ def TROP_cv_joint(
                         solver,
                         verbose,
                     )
-                    for seed in seeds
+                    for trial_or_fold in range(n_trial_or_fold)
                 )
-
+    
                 ates_arr = np.asarray(ates, dtype=float)
                 ates_arr = ates_arr[np.isfinite(ates_arr)]
                 if ates_arr.size == 0:
