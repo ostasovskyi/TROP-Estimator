@@ -50,13 +50,15 @@ Tuning (placebo cross-validation)
    from trop.cv import TROP_cv_joint
 
    best = TROP_cv_joint(
-       Y_control=Y_control,
-       n_treated_units=n_treated_units,
-       treated_periods=treated_periods,
-       unit_grid=unit_grid,
-       time_grid=time_grid,
-       nn_grid=nn_grid,
-   )
+    Y_control=Y_control,
+    treated_periods=treated_periods,
+    unit_grid=unit_grid,
+    time_grid=time_grid,
+    nn_grid=nn_grid,
+    cv_sampling_method="resample",
+    n_trials=200,
+    n_treated_units=n_treated_units,
+)
 
    print("Selected (lambda_unit, lambda_time, lambda_nn):", best)
 
