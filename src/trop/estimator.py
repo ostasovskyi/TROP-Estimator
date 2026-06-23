@@ -171,5 +171,3 @@ def TROP_TWFE_average(
         )
 
     return tau_hat
-
-    return float(tau.value)
