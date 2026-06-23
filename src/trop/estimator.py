@@ -129,7 +129,6 @@ def TROP_TWFE_average(
     unit_effects = cp.Variable((1, N))
     time_effects = cp.Variable((1, T))
     mu = cp.Variable()     # intercept
-    tau = cp.Variable()    # treatment effect
 
     # Broadcast TWFE components to N x T
     unit_factor = cp.kron(np.ones((T, 1)), unit_effects).T
@@ -139,12 +138,12 @@ def TROP_TWFE_average(
 
     if is_low_rank:
         L = cp.Variable((N, T))
-        residual = Y - mu - unit_factor - time_factor - L - W * tau
+        residual = Y - mu - unit_factor - time_factor - L
         weights = np.multiply(1.0 - W, delta)
         loss = cp.sum(cp.multiply(weights, cp.square(residual))) + float(lambda_nn) * cp.norm(L, "nuc")
         default_solver = "SCS"  # robust choice for nuclear norm problems
     else:
-        residual = Y - mu - unit_factor - time_factor - W * tau
+        residual = Y - mu - unit_factor - time_factor
         weights = np.multiply(1.0 - W, delta)
         loss = cp.sum(cp.multiply(weights, cp.square(residual)))
         default_solver = "OSQP"  # fast for pure quadratic objective
@@ -154,10 +153,23 @@ def TROP_TWFE_average(
     chosen_solver = solver or default_solver
     prob.solve(solver=chosen_solver, verbose=verbose)
 
-    if tau.value is None or not np.isfinite(tau.value):
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        raise RuntimeError(
+            "Optimization did not converge. "
+            f"Solver={chosen_solver}, status={prob.status}."
+        )
+
+    fit = mu.value + np.tile(unit_effects.value.T, (1, T)) + np.tile(time_effects.value, (N, 1))
+    if is_low_rank:
+        fit = fit + L.value
+    tau_hat = float(np.mean((Y - fit)[W > 0]))
+
+    if tau_hat is None or not np.isfinite(tau_hat):
         raise RuntimeError(
             "Optimization did not return a valid tau. "
             f"Solver={chosen_solver}, status={prob.status}."
         )
+
+    return tau_hat
 
     return float(tau.value)
