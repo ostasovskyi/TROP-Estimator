@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 src/trop/__init__.py
+src/trop/adaptive_cv.py
 src/trop/cv.py
 src/trop/estimator.py
 src/trop.egg-info/PKG-INFO

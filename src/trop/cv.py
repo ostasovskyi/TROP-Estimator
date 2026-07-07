@@ -190,6 +190,239 @@ def _placebo_rmse_for_lambdas(
     return float(np.sqrt(np.mean(ates_arr ** 2)))
 
 
+def _evaluate_new_triplets(
+    Y: np.ndarray,
+    treated_periods: int,
+    placebo_sets: Sequence[np.ndarray],
+    triplets: Sequence[Tuple[float, float, float]],
+    score_dict: dict,
+    *,
+    n_jobs: int,
+    prefer: str,
+    solver: Optional[str],
+    verbose: bool,
+) -> None:
+    """Evaluate new triplets and cache their placebo RMSE scores."""
+    todo = [triplet for triplet in triplets if triplet not in score_dict]
+    if not todo:
+        return
+
+    results = Parallel(n_jobs=n_jobs, prefer=prefer)(
+        delayed(_placebo_rmse_for_lambdas)(
+            Y=Y,
+            placebo_sets=placebo_sets,
+            treated_periods=treated_periods,
+            lambda_unit=float(lambda_unit),
+            lambda_time=float(lambda_time),
+            lambda_nn=float(lambda_nn),
+            n_jobs=1,
+            prefer=prefer,
+            solver=solver,
+            verbose=verbose,
+        )
+        for lambda_unit, lambda_time, lambda_nn in todo
+    )
+
+    for triplet, score in zip(todo, results):
+        score_dict[triplet] = float("inf") if score is None else score
+
+
+def _best_on_grid(
+    axes: Sequence[np.ndarray],
+    score_dict: dict,
+) -> Tuple[Tuple[float, float, float], float, bool, Tuple[bool, bool, bool]]:
+    """Return best triplet on a grid, whether it is interior, and boundary flags."""
+    pts = [
+        (lambda_unit, lambda_time, lambda_nn)
+        for lambda_unit in axes[0]
+        for lambda_time in axes[1]
+        for lambda_nn in axes[2]
+    ]
+    scores = [score_dict.get(pt, float("inf")) for pt in pts]
+    idx = int(np.argmin(scores))
+    best = pts[idx]
+    best_score = float(scores[idx])
+    on_boundary = [
+        bool(np.isclose(best[d], axes[d][0], rtol=1e-9, atol=0) or
+             np.isclose(best[d], axes[d][-1], rtol=1e-9, atol=0))
+        for d in range(3)
+    ]
+    return best, best_score, not any(on_boundary), tuple(on_boundary)
+
+
+def _expand_ranges(
+    ranges: Sequence[Tuple[float, float]],
+    best: Tuple[float, float, float],
+    on_boundary: Sequence[bool],
+    expand_factor: float,
+) -> List[Tuple[float, float]]:
+    """Extend each boundary-hitting axis by expand_factor × current span."""
+    new_ranges: List[Tuple[float, float]] = []
+    for d, (lo, hi) in enumerate(ranges):
+        if not on_boundary[d]:
+            new_ranges.append((lo, hi))
+            continue
+        span = hi - lo
+        if np.isclose(best[d], lo, rtol=1e-9, atol=0):
+            new_ranges.append((max(lo - expand_factor * span, 0.0), hi))
+        else:
+            new_ranges.append((lo, hi + expand_factor * span))
+    return new_ranges
+
+
+def _zoom_ranges(
+    best: Tuple[float, float, float],
+    ranges: Sequence[Tuple[float, float]],
+    zoom_factor: float,
+) -> List[Tuple[float, float]]:
+    """Contract each axis to a window of half-width span / zoom_factor around best."""
+    new_ranges: List[Tuple[float, float]] = []
+    for d, (lo, hi) in enumerate(ranges):
+        half = (hi - lo) / zoom_factor
+        new_lo = max(best[d] - half, lo)
+        new_hi = min(best[d] + half, hi)
+        if new_lo >= new_hi:
+            new_lo, new_hi = lo, hi
+        new_ranges.append((new_lo, new_hi))
+    return new_ranges
+
+
+def adaptive_TROP_cv(
+    Y_control: ArrayLike,
+    treated_periods: int,
+    *,
+    init_ranges: Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]] = (
+        (0.0, 1.0),
+        (0.0, 1.0),
+        (0.0, 1.0),
+    ),
+    n_points: int = 10,
+    n_trials: Optional[int] = 200,
+    n_jobs: int = -1,
+    prefer: str = "threads",
+    expand_factor: float = 1.0,
+    max_expansions: int = 6,
+    zoom: bool = True,
+    zoom_factor: float = 4.0,
+    zoom_n_points: int = 9,
+    cv_sampling_method: str = "resample",
+    n_treated_units: Optional[int] = 1,
+    K: Optional[int] = None,
+    random_seed: int = 0,
+    solver: Optional[str] = None,
+    verbose: bool = False,
+) -> Tuple[float, float, float]:
+    """Adaptive joint placebo cross-validation for (lambda_unit, lambda_time, lambda_nn)."""
+    Y = np.asarray(Y_control, dtype=float)
+    N, _ = _validate_panel(Y, treated_periods)
+
+    if len(init_ranges) != 3 or any(len(r) != 2 for r in init_ranges):
+        raise ValueError("init_ranges must be a sequence of three (lo, hi) tuples.")
+    if n_points < 2 or zoom_n_points < 2:
+        raise ValueError("n_points and zoom_n_points must be at least 2.")
+    if expand_factor < 0 or zoom_factor <= 0:
+        raise ValueError("expand_factor must be nonnegative and zoom_factor must be positive.")
+
+    ranges: List[Tuple[float, float]] = [tuple(r) for r in init_ranges]
+    score_dict: dict = {}
+
+    placebo_sets = _generate_placebo_sets(
+        N,
+        cv_sampling_method=cv_sampling_method,
+        n_treated_units=n_treated_units,
+        n_trials=n_trials,
+        K=K,
+        random_state=random_seed,
+    )
+
+    param_names = ["lambda_unit", "lambda_time", "lambda_nn"]
+
+    def _log(phase: str, expansion: int, best: Tuple[float, float, float], score: float, interior: bool) -> None:
+        if not verbose:
+            return
+        pstr = ", ".join(f"{param_names[d]}={best[d]:.4g}" for d in range(3))
+        rstr = " | ".join(
+            f"{param_names[d]}∈[{ranges[d][0]:.3g},{ranges[d][1]:.3g}]"
+            for d in range(3)
+        )
+        print(
+            f"[{phase} {expansion:2d}]  score={score:.6g}  interior={interior}"
+            f"  evals={len(score_dict)}\n"
+            f"           best : {pstr}\n"
+            f"           grid : {rstr}"
+        )
+
+    best: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    for expansion in range(max_expansions + 1):
+        axes = [np.linspace(lo, hi, n_points) for lo, hi in ranges]
+        triplets = [
+            (lambda_unit, lambda_time, lambda_nn)
+            for lambda_unit in axes[0]
+            for lambda_time in axes[1]
+            for lambda_nn in axes[2]
+        ]
+
+        _evaluate_new_triplets(
+            Y,
+            treated_periods,
+            placebo_sets,
+            triplets,
+            score_dict,
+            n_jobs=n_jobs,
+            prefer=prefer,
+            solver=solver,
+            verbose=verbose,
+        )
+
+        best, best_score, is_interior, on_boundary = _best_on_grid(axes, score_dict)
+        _log("expand", expansion, best, best_score, is_interior)
+
+        if is_interior:
+            break
+
+        if expansion < max_expansions:
+            ranges = _expand_ranges(ranges, best, on_boundary, expand_factor)
+        elif verbose:
+            print(
+                f"Best point still on boundary after {max_expansions} expansions. "
+                "Consider wider init_ranges or a larger expand_factor."
+            )
+
+    if zoom:
+        zoom_ranges = _zoom_ranges(best, ranges, zoom_factor)
+        zoom_axes = [np.linspace(lo, hi, zoom_n_points) for lo, hi in zoom_ranges]
+        zoom_triplets = [
+            (lambda_unit, lambda_time, lambda_nn)
+            for lambda_unit in zoom_axes[0]
+            for lambda_time in zoom_axes[1]
+            for lambda_nn in zoom_axes[2]
+        ]
+
+        _evaluate_new_triplets(
+            Y,
+            treated_periods,
+            placebo_sets,
+            zoom_triplets,
+            score_dict,
+            n_jobs=n_jobs,
+            prefer=prefer,
+            solver=solver,
+            verbose=verbose,
+        )
+
+        best, best_score, is_interior, _ = _best_on_grid(zoom_axes, score_dict)
+        _log("zoom", 0, best, best_score, is_interior)
+
+    if verbose:
+        print(
+            f"\nDone. {len(score_dict)} unique triplets evaluated "
+            f"(× {n_trials} trials = {len(score_dict) * n_trials} total runs)."
+        )
+
+    return best
+
+
 def TROP_cv_single(
     Y_control: ArrayLike,
     treated_periods: int,
