@@ -118,10 +118,12 @@ def TROP_TWFE_average(
 
     dist_unit = np.sqrt(A / B)
 
-    # Convert distances to weights
-    delta_unit = np.exp(-lambda_unit * dist_unit)          # shape (N,)
-    delta_time = np.exp(-lambda_time * dist_time)          # shape (T,)
-    delta = np.outer(delta_unit, delta_time)               # shape (N, T)
+    # Convert distances to weights. lambda_unit/lambda_time are pre-halved here
+    # so that squaring these (via cp.sum_squares below) recovers the intended
+    # exp(-lambda_unit * dist_unit) * exp(-lambda_time * dist_time) weighting.
+    delta_unit = np.exp(-0.5 * lambda_unit * dist_unit)     # shape (N,)
+    delta_time = np.exp(-0.5 * lambda_time * dist_time)     # shape (T,)
+    delta = np.outer(delta_unit, delta_time)                # shape (N, T)
 
     # ---------------------------------------------------------------------
     # CVXPY problem: weighted TWFE
@@ -135,17 +137,16 @@ def TROP_TWFE_average(
     time_factor = cp.kron(np.ones((N, 1)), time_effects)
 
     is_low_rank = not math.isinf(float(lambda_nn))
+    sqrt_weights = np.multiply(1.0 - W, delta)
 
     if is_low_rank:
         L = cp.Variable((N, T))
         residual = Y - mu - unit_factor - time_factor - L
-        weights = np.multiply(1.0 - W, delta)
-        loss = cp.sum(cp.multiply(weights, cp.square(residual))) + float(lambda_nn) * cp.norm(L, "nuc")
+        loss = cp.sum_squares(cp.multiply(sqrt_weights, residual)) + float(lambda_nn) * cp.norm(L, "nuc")
         default_solver = "SCS"  # robust choice for nuclear norm problems
     else:
         residual = Y - mu - unit_factor - time_factor
-        weights = np.multiply(1.0 - W, delta)
-        loss = cp.sum(cp.multiply(weights, cp.square(residual)))
+        loss = cp.sum_squares(cp.multiply(sqrt_weights, residual))
         default_solver = "OSQP"  # fast for pure quadratic objective
 
     prob = cp.Problem(cp.Minimize(loss))
