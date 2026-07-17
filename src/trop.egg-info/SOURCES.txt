@@ -2,12 +2,15 @@ LICENSE
 README.md
 pyproject.toml
 src/trop/__init__.py
-src/trop/adaptive_cv.py
+src/trop/baselines.py
 src/trop/cv.py
 src/trop/estimator.py
+src/trop/simulation.py
 src/trop.egg-info/PKG-INFO
 src/trop.egg-info/SOURCES.txt
 src/trop.egg-info/dependency_links.txt
 src/trop.egg-info/requires.txt
 src/trop.egg-info/top_level.txt
+tests/test_baselines.py
+tests/test_simulation.py
 tests/test_smoke_trop.py
